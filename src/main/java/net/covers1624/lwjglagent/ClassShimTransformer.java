@@ -127,8 +127,13 @@ public class ClassShimTransformer implements ClassFileTransformer {
                     }
 
                     mv.visitMethodInsn(INVOKESTATIC, shimNode.name, method.name, method.desc, false);
-                    mv.visitInsn(Type.getReturnType(method.desc).getOpcode(IRETURN));
-                    mv.visitMaxs(localIdx, localIdx); // Max locals and stack are identical for static bouncer methods.
+                    Type ret = Type.getReturnType(method.desc);
+                    mv.visitInsn(ret.getOpcode(IRETURN));
+                    // Max locals and stack are identical for static bouncer methods.
+                    mv.visitMaxs(
+                            Math.max(localIdx, ret.getSize()),
+                            localIdx
+                    );
                     mv.visitEnd();
                 }
             }
