@@ -13,9 +13,11 @@ repositories {
 
 sourceSets {
     shim
+    tools
 }
 
 configurations {
+    lwjgl2
     lwjgl3
     shimImplementation {
         extendsFrom lwjgl3
@@ -27,9 +29,15 @@ configurations {
 
     shimCompileOnly.extendsFrom implementation
     shimCompileOnly.extendsFrom compileOnly
+
+    toolsImplementation.extendsFrom implementation
+    toolsCompileOnly.extendsFrom compileOnly
 }
 
 dependencies {
+    lwjgl2 'org.lwjgl.lwjgl:lwjgl:2.9.3'
+    lwjgl2 'org.lwjgl.lwjgl:lwjgl_util:2.9.3'
+
     lwjgl3 'org.lwjgl:lwjgl:3.3.3'
     lwjgl3 'org.lwjgl:lwjgl-glfw:3.3.3'
     lwjgl3 'org.lwjgl:lwjgl-opengl:3.3.3'
@@ -53,6 +61,8 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.9.1')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+
+    toolsImplementation sourceSets.main.output
 }
 
 test {
@@ -111,9 +121,20 @@ tasks.register('finalJar', Jar) {
 }
 assemble.dependsOn 'finalJar'
 
+tasks.register('setupPaths') {
+    doFirst {
+        file('./run').mkdirs()
+        file('./run/lwjgl2.paths').text = project.configurations.lwjgl2.files.collect { it.absolutePath }.join('\n')
+        file('./run/lwjgl3.paths').text = project.configurations.lwjgl3.files.collect { it.absolutePath }.join('\n')
+    }
+}
+
 idea.project.settings {
     delegateActions {
         delegateBuildRunToGradle = false
         testRunner = org.jetbrains.gradle.ext.ActionDelegationConfig.TestRunner.PLATFORM
+    }
+    taskTriggers {
+        beforeSync 'setupPaths'
     }
 }

@@ -58,6 +58,11 @@ public class LWJGLAgent {
         } catch (Throwable ex) {
             throw new RuntimeException("Failed to splice system classloader.", ex);
         }
+
+        Path shimJar = FastStream.of(LWJGL3_JARS)
+                .filter(e -> e.getFileName().toString().equals("lwjgl-shim.jar"))
+                .only();
+        inst.addTransformer(new ClassShimTransformer(shimJar));
     }
 
     private static void spliceClassLoader() throws Throwable {
