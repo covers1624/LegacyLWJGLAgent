@@ -33,10 +33,12 @@ package org.lwjgl.opengl;
 
 import net.covers1624.lwjglagent.PartialStubbedMethod;
 import net.covers1624.lwjglagent.StubbedMethod;
+import net.covers1624.quack.collection.FastStream;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.LWJGLException;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
+import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.glfw.GLFWWindowSizeCallback;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
@@ -65,8 +67,9 @@ public class Display {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Display.class);
 
+    private static final DisplayMode[] EMPTY_DISPLAY_MODES = new DisplayMode[0];
+
     private static DisplayMode displayMode;
-    private static boolean created;
     private static boolean resizable;
     private static String title = "Game";
 
@@ -83,12 +86,31 @@ public class Display {
         throw new StubbedMethod();
     }
 
-    public static DisplayMode[] getAvailableDisplayModes() throws LWJGLException {
-        throw new StubbedMethod();
+    public static DisplayMode[] getAvailableDisplayModes() {
+        long monitor = glfwGetPrimaryMonitor();
+        if (monitor == MemoryUtil.NULL) return EMPTY_DISPLAY_MODES;
+
+        GLFWVidMode.Buffer buffer = glfwGetVideoModes(monitor);
+        if (buffer == null) return EMPTY_DISPLAY_MODES;
+
+        return FastStream.of(buffer)
+                .map(Display::getMode)
+                .toArray(EMPTY_DISPLAY_MODES);
     }
 
-    public static DisplayMode getDesktopDisplayMode() {
-        throw new StubbedMethod();
+    // TODO this is actually initialized at Display init. We should do that too. Eventually.
+    public static @Nullable DisplayMode getDesktopDisplayMode() {
+        long monitor = glfwGetPrimaryMonitor();
+        if (monitor == MemoryUtil.NULL) return null;
+
+        GLFWVidMode mode = glfwGetVideoMode(monitor);
+        if (mode == null) return null;
+
+        return getMode(mode);
+    }
+
+    private static DisplayMode getMode(GLFWVidMode mode) {
+        return new DisplayMode(mode.width(), mode.height(), mode.redBits() + mode.blueBits() + mode.greenBits(), mode.refreshRate());
     }
 
     public static DisplayMode getDisplayMode() {
