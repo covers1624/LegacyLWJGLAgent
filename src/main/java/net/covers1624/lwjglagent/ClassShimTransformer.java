@@ -48,14 +48,21 @@ public class ClassShimTransformer implements ClassFileTransformer {
                     ClassReader cr = new ClassReader(is);
                     AnnotationLoader anns = new AnnotationLoader(true);
                     cr.accept(anns.forClass(), ClassReader.SKIP_CODE);
-                    if (anns.getAnnotation(Shim.class) == null) continue;
+                    Shim shim = anns.getAnnotation(Shim.class);
+                    if (shim == null) continue;
                     String cName = cr.getClassName();
-                    String sName = cr.getSuperName();
-                    if (sName.equals("java/lang/Object")) {
-                        throw new RuntimeException("Shim class " + cName + " extends Object, must extend target.");
+
+                    String target = shim.value().replace('.', '/');
+                    if (target.isEmpty()) {
+                        String sName = cr.getSuperName();
+                        if (sName.equals("java/lang/Object")) {
+                            throw new RuntimeException("Shim class " + cName + " extends Object. Extend target or add value to @Shim");
+                        }
+                        target = sName;
                     }
-                    LOGGER.info("  Found @Shim: {} -> {}", cName, sName);
-                    shims.put(sName, cName);
+
+                    LOGGER.info("  Found @Shim: {} -> {}", cName, target);
+                    shims.put(target, cName);
                 }
             }
         }
