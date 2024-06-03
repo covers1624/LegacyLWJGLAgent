@@ -9,3 +9,6 @@
 !settings.gradle
 
 !.gitignore
+!README.md
+!LICENSE.txt
+!LICENSE_LWJGL.txt
