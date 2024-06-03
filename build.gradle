@@ -1,5 +1,7 @@
 plugins {
     id 'java'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+    id 'org.jetbrains.gradle.plugin.idea-ext' version '1.1.7'
 }
 
 group = 'net.covers1624'
@@ -9,11 +11,109 @@ repositories {
     mavenCentral()
 }
 
+sourceSets {
+    shim
+}
+
+configurations {
+    lwjgl3
+    shimImplementation {
+        extendsFrom lwjgl3
+    }
+    embedd {
+        canBeResolved = true
+        extendsFrom shimImplementation
+    }
+
+    shimCompileOnly.extendsFrom implementation
+    shimCompileOnly.extendsFrom compileOnly
+}
+
 dependencies {
+    lwjgl3 'org.lwjgl:lwjgl:3.3.3'
+    lwjgl3 'org.lwjgl:lwjgl-glfw:3.3.3'
+    lwjgl3 'org.lwjgl:lwjgl-opengl:3.3.3'
+    lwjgl3 'org.lwjgl:lwjgl-openal:3.3.3'
+    ['linux', 'windows', 'macos'].forEach { platform ->
+        lwjgl3 "org.lwjgl:lwjgl:3.3.3:natives-$platform"
+        lwjgl3 "org.lwjgl:lwjgl-glfw:3.3.3:natives-$platform"
+        lwjgl3 "org.lwjgl:lwjgl-opengl:3.3.3:natives-$platform"
+        lwjgl3 "org.lwjgl:lwjgl-openal:3.3.3:natives-$platform"
+    }
+    shimCompileOnly sourceSets.main.output
+
+    implementation 'org.slf4j:slf4j-api:2.0.13'
+    implementation 'net.covers1624:Quack:0.4.10.101'
+
+    implementation 'org.ow2.asm:asm:9.4'
+    implementation 'org.ow2.asm:asm-tree:9.4'
+
+    compileOnly 'org.jetbrains:annotations:23.1.0'
+    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
+
     testImplementation platform('org.junit:junit-bom:5.9.1')
     testImplementation 'org.junit.jupiter:junit-jupiter'
 }
 
 test {
     useJUnitPlatform()
+}
+
+def relocatePackages = [
+        'org/objectweb',
+        'org/slf4j'
+]
+
+def lwjglShimJarTask = tasks.register("lwjglShimJar", com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    archiveFileName = "lwjgl-shim.jar"
+    from sourceSets.shim.output
+
+    relocate 'net/covers1624/quack', 'net/covers1624/lwjglagent/quack'
+    relocatePackages.each {
+        relocate it, "net/covers1624/lwjglagent/repack/$it"
+    }
+}
+
+jar.enabled = false
+
+// We use shadowjar here to just remap dependencies..
+// Unfortunately, we can't pack actual jars into a ShadowJar task, it just wants to merge them.
+shadowJar {
+    configurations = [project.configurations.runtimeClasspath]
+
+    // Yeet the junk!
+    exclude '**/module-info.class'
+    exclude 'META-INF/org/apache/**'
+    exclude 'META-INF/maven/**'
+
+    relocate 'net/covers1624/quack', 'net/covers1624/lwjglagent/quack'
+    relocatePackages.each {
+        relocate it, "net/covers1624/lwjglagent/repack/$it"
+    }
+
+    mergeServiceFiles()
+}
+
+tasks.register('finalJar', Jar) {
+    dependsOn(shadowJar)
+    from(zipTree(shadowJar.outputs.files.first()))
+
+    manifest {
+        attributes 'Premain-Class': 'net.covers1624.lwjglagent.LWJGLAgent'
+    }
+
+    from(project.configurations.embedd) { CopySpec spec ->
+        spec.into("META-INF/jars")
+    }
+    from(lwjglShimJarTask) { CopySpec spec ->
+        spec.into('META-INF/jars')
+    }
+}
+assemble.dependsOn 'finalJar'
+
+idea.project.settings {
+    delegateActions {
+        delegateBuildRunToGradle = false
+        testRunner = org.jetbrains.gradle.ext.ActionDelegationConfig.TestRunner.PLATFORM
+    }
 }
