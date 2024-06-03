@@ -312,7 +312,8 @@ public class Display {
     }
 
     public static int setIcon(ByteBuffer[] icons) {
-        throw new StubbedMethod();
+        // TODO no-op for now.
+        return 0;
     }
 
     public static void setResizable(boolean resizable) {
