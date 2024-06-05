@@ -1,7 +1,7 @@
 package net.covers1624.lwjglagent;
 
-import net.covers1624.lwjglagent.shim.Shim;
 import net.covers1624.lwjglagent.shim.Named;
+import net.covers1624.lwjglagent.shim.Shim;
 import net.covers1624.quack.asm.annotation.AnnotationLoader;
 import net.covers1624.quack.collection.ColUtils;
 import net.covers1624.quack.io.IOUtils;
@@ -52,21 +52,23 @@ public class ClassShimTransformer implements ClassFileTransformer {
                     if (shim == null) continue;
                     String cName = cr.getClassName();
 
-                    String target = shim.value().replace('.', '/');
-                    if (target.isEmpty()) {
-                        String sName = cr.getSuperName();
-                        if (sName.equals("java/lang/Object")) {
-                            throw new RuntimeException("Shim class " + cName + " extends Object. Extend target or add value to @Shim");
-                        }
-                        target = sName;
-                    }
-
+                    String target = getShimTarget(shim, cr.getSuperName());
                     LOGGER.info("  Found @Shim: {} -> {}", cName, target);
                     shims.put(target, cName);
                 }
             }
         }
         LOGGER.info("Identified {} shim classes.", shims.size());
+    }
+
+    public static String getShimTarget(Shim shim, String superClass) {
+        String target = shim.value().replace('.', '/');
+        if (!target.isEmpty()) return target;
+
+        if (superClass.equals("java/lang/Object")) {
+            throw new RuntimeException("Shim class " + superClass + " extends Object. Extend target or add value to @Shim");
+        }
+        return superClass;
     }
 
     @Override

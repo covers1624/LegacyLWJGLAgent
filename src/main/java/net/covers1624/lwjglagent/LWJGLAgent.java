@@ -89,7 +89,7 @@ public class LWJGLAgent {
         Map<String, Object> lmap = privateGet(f_lmap, classPath);
 
         List<URL> toRemove = FastStream.of(path)
-                .filter(e -> ColUtils.anyMatch(LWJGL2_JARS, p -> p.matcher(e.toString()).find()))
+                .filter(e -> isStrippedJar(e.toString()))
                 .toList();
         LOGGER.info("Identified {} jars to remove from System ClassLoader:", toRemove.size());
         for (URL url : toRemove) {
@@ -119,6 +119,10 @@ public class LWJGLAgent {
             m_addURL.invoke(classLoader, jar.toUri().toURL());
         }
         LOGGER.info("Splicing complete!");
+    }
+
+    public static boolean isStrippedJar(String path) {
+        return ColUtils.anyMatch(LWJGL2_JARS, p -> p.matcher(path).find());
     }
 
     private static void setupDataDir(Path ourJar) throws IOException {

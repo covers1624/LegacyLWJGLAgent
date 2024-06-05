@@ -1,5 +1,7 @@
 package net.covers1624.lwjglagent.tools;
 
+import net.covers1624.lwjglagent.LWJGLAgent;
+import net.covers1624.quack.asm.annotation.AnnotationLoader;
 import net.covers1624.quack.collection.ColUtils;
 import net.covers1624.quack.collection.FastStream;
 import org.jetbrains.annotations.Nullable;
@@ -12,11 +14,16 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-import static org.objectweb.asm.Opcodes.*;
+import static net.covers1624.quack.util.SneakyUtils.sneak;
+import static org.objectweb.asm.Opcodes.ASM9;
 
 /**
  * Created by covers1624 on 2/6/24.
@@ -27,8 +34,11 @@ public class ShimTools {
 
     public final List<Path> lwjgl2Paths;
     public final List<Path> lwjgl3Paths;
-    public final Map<String, ClassEntry> lwjgl2Classes;
-    public final Map<String, ClassEntry> lwjgl3Classes;
+    public final Path shimCompileDir;
+
+    public final List<Path> runtimePaths = new ArrayList<>();
+
+    public final Map<Path, Map<String, ClassEntry>> classes;
 
     private ShimTools() throws IOException {
         lwjgl2Paths = FastStream.of(Files.readAllLines(Paths.get("./lwjgl2.paths")))
@@ -37,8 +47,23 @@ public class ShimTools {
         lwjgl3Paths = FastStream.of(Files.readAllLines(Paths.get("./lwjgl3.paths")))
                 .map(Paths::get)
                 .toList();
-        lwjgl2Classes = loadJars(lwjgl2Paths);
-        lwjgl3Classes = loadJars(lwjgl3Paths);
+        Path intellijOutput = Paths.get("./../out/shim/classes");
+        Path gradleOutput = Paths.get("./../build/classes/java/shim");
+        if (Files.exists(intellijOutput.resolve("org/lwjgl/LWJGLException.class"))) {
+            shimCompileDir = intellijOutput;
+        } else {
+            shimCompileDir = gradleOutput;
+        }
+
+        runtimePaths.addAll(lwjgl3Paths);
+        runtimePaths.addAll(FastStream.of(lwjgl2Paths)
+                .filterNot(e -> LWJGLAgent.isStrippedJar(e.toString()))
+                .toList()
+        );
+        runtimePaths.add(shimCompileDir);
+
+        classes = FastStream.concat(lwjgl2Paths, lwjgl3Paths, FastStream.ofNullable(shimCompileDir))
+                .toMap(e -> e, sneak(ShimTools::load));
     }
 
     public static void main(String[] args) throws IOException {
@@ -47,18 +72,30 @@ public class ShimTools {
             new ShimGenerator(shimTools).generate(args[0].replace('.', '/'));
             return;
         }
-        LOGGER.error("Unhandled number of arguments. " + args.length);
+        if (args.length == 0) {
+            new BinCompatChecker(shimTools).scan();
+            return;
+        }
+        LOGGER.error("Unhandled number of arguments. {}", args.length);
     }
 
-    private static Map<String, ClassEntry> loadJars(List<Path> jars) throws IOException {
-        Map<String, ClassEntry> entries = new HashMap<>();
-        for (Path jar : jars) {
-            loadJar(jar, entries);
+    public Map<String, ClassEntry> getEntries(List<Path> paths) {
+        Map<String, ClassEntry> entries = new LinkedHashMap<>();
+        for (Path path : paths) {
+            entries.putAll(classes.get(path));
         }
         return entries;
     }
 
-    private static void loadJar(Path jar, Map<String, ClassEntry> entries) throws IOException {
+    private static Map<String, ClassEntry> load(Path path) throws IOException {
+        if (path.toString().endsWith(".jar")) return loadJar(path);
+        if (Files.isDirectory(path)) return loadFolder(path);
+
+        throw new RuntimeException("Can't load: " + path);
+    }
+
+    private static Map<String, ClassEntry> loadJar(Path jar) throws IOException {
+        Map<String, ClassEntry> entries = new LinkedHashMap<>();
         try (ZipFile file = new ZipFile(jar.toFile())) {
             for (ZipEntry entry : ColUtils.iterable(file.entries())) {
                 if (entry.isDirectory()) continue;
@@ -68,49 +105,80 @@ public class ShimTools {
                 if (!eName.endsWith(".class")) continue;
 
                 try (InputStream is = file.getInputStream(entry)) {
-                    ClassReader cr = new ClassReader(is);
-                    String cName = cr.getClassName();
-                    ClassEntry cEnt = new ClassEntry(cName);
-                    cr.accept(cEnt.visitor(), 0);
-                    ClassEntry existing = entries.put(cName, cEnt);
-                    if (existing != null) {
-                        throw new RuntimeException("Duplicate class: " + cName);
-                    }
+                    loadClass(is, entries);
                 }
             }
         }
+        return entries;
+    }
+
+    private static Map<String, ClassEntry> loadFolder(Path folder) throws IOException {
+        Map<String, ClassEntry> entries = new LinkedHashMap<>();
+        try (Stream<Path> stream = Files.walk(folder)) {
+            for (Path path : FastStream.of(stream)) {
+                if (Files.isDirectory(path)) continue;
+                String fName = path.getFileName().toString();
+                if (fName.contains("META-INF")) continue;
+                if (fName.equals("module-info.class")) continue;
+                if (!fName.endsWith(".class")) continue;
+
+                try (InputStream is = Files.newInputStream(path)) {
+                    loadClass(is, entries);
+                }
+            }
+        }
+        return entries;
+    }
+
+    private static void loadClass(InputStream is, Map<String, ClassEntry> entries) throws IOException {
+        class Visitor extends ClassVisitor {
+
+            public final Map<String, MethodEntry> methods = new LinkedHashMap<>();
+
+            public Visitor(ClassVisitor parent) {
+                super(ASM9, parent);
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodEntry entry = new MethodEntry(access, name, descriptor, signature, exceptions);
+                methods.put(name + descriptor, entry);
+                return new MethodVisitor(ASM9, super.visitMethod(access, name, descriptor, signature, exceptions)) {
+                    @Override
+                    public void visitLocalVariable(String name, String descriptor, String signature, Label start, Label end, int index) {
+                        super.visitLocalVariable(name, descriptor, signature, start, end, index);
+                        if (index >= entry.locals.length) return;
+
+                        entry.locals[index] = name;
+                    }
+                };
+            }
+        }
+        ClassReader cr = new ClassReader(is);
+        AnnotationLoader al = new AnnotationLoader(true);
+        Visitor visitor = new Visitor(al.forClass());
+        cr.accept(visitor, 0);
+
+        ClassEntry cEnt = new ClassEntry(cr.getClassName(), cr.getSuperName(), cr.getInterfaces(), cr.getAccess(), visitor.methods, al);
+        entries.put(cEnt.name, cEnt);
     }
 
     public static final class ClassEntry {
 
         public final String name;
-        public final Map<String, MethodEntry> methods = new LinkedHashMap<>();
+        public final String superClass;
+        public final String[] interfaces;
+        public final int access;
+        public final Map<String, MethodEntry> methods;
+        public final AnnotationLoader annotations;
 
-        public ClassEntry(String name) {
+        public ClassEntry(String name, String superClass, String[] interfaces, int access, Map<String, MethodEntry> methods, AnnotationLoader annotations) {
             this.name = name;
-        }
-
-        public ClassVisitor visitor() {
-            return visitor(null);
-        }
-
-        public ClassVisitor visitor(@Nullable ClassVisitor delegate) {
-            return new ClassVisitor(Opcodes.ASM9, delegate) {
-                @Override
-                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                    MethodEntry entry = new MethodEntry(access, name, descriptor, signature, exceptions);
-                    methods.put(name + descriptor, entry);
-                    return new MethodVisitor(ASM9, super.visitMethod(access, name, descriptor, signature, exceptions)) {
-                        @Override
-                        public void visitLocalVariable(String name, String descriptor, String signature, Label start, Label end, int index) {
-                            super.visitLocalVariable(name, descriptor, signature, start, end, index);
-                            if (index >= entry.locals.length) return;
-
-                            entry.locals[index] = name;
-                        }
-                    };
-                }
-            };
+            this.superClass = superClass;
+            this.interfaces = interfaces;
+            this.access = access;
+            this.methods = methods;
+            this.annotations = annotations;
         }
     }
 

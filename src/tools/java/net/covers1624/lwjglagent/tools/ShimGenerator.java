@@ -1,16 +1,15 @@
 package net.covers1624.lwjglagent.tools;
 
+import net.covers1624.quack.collection.FastStream;
 import org.jetbrains.annotations.Nullable;
 import org.objectweb.asm.Type;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
-import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
-import static org.objectweb.asm.Opcodes.ACC_STATIC;
+import static org.objectweb.asm.Opcodes.*;
 
 /**
  * Created by covers1624 on 4/6/24.
@@ -26,12 +25,12 @@ public class ShimGenerator {
     }
 
     public void generate(String target) {
-        ShimTools.ClassEntry l2Ent = shimTools.lwjgl2Classes.get(target);
+        ShimTools.ClassEntry l2Ent = shimTools.getEntries(shimTools.lwjgl2Paths).get(target);
         if (l2Ent == null) {
             LOGGER.error("Class does not exist in LWJGL2 {}", target);
             return;
         }
-        ShimTools.ClassEntry l3Ent = shimTools.lwjgl3Classes.get(target);
+        ShimTools.ClassEntry l3Ent = shimTools.getEntries(shimTools.lwjgl3Paths).get(target);
         if (l3Ent == null) {
             LOGGER.error("Class does not exist in LWJGL3 {}", target);
             return;
@@ -52,30 +51,41 @@ public class ShimGenerator {
             LOGGER.info("No stubs!");
             return;
         }
-        int lastSlash = target.lastIndexOf("/");
-        String shortName = target.substring(lastSlash + 1);
 
         LOGGER.info("Stub class:");
 
-        generateClass(shortName, target, methods, l3Ent);
+        generateClass(target, methods, l3Ent);
     }
 
-    private void generateClass(String shortName, String targetClass, List<ShimTools.MethodEntry> methods, ShimTools.ClassEntry l3Ent) {
+    public static List<String> generateClass(String targetClass, List<ShimTools.MethodEntry> methods, @Nullable ShimTools.ClassEntry l3Ent) {
+        int lastSlash = targetClass.lastIndexOf("/");
+        String shortName = targetClass.substring(lastSlash + 1);
+
         List<String> imports = new ArrayList<>();
         imports.add("net.covers1624.lwjglagent.StubbedMethod");
-        imports.add("net.covers1624.lwjglagent.shim.Shim");
 
         List<String> l = new ArrayList<>();
-        l.add("@Shim");
+
+        if (l3Ent != null) {
+            imports.add("net.covers1624.lwjglagent.shim.Shim");
+            l.add("@Shim");
+        }
+
         l.add("public class " + shortName + " extends " + targetClass.replace('/', '.') + " {");
         for (ShimTools.MethodEntry method : methods) {
             l.add("");
             Type ret = Type.getReturnType(method.desc);
             Type[] args = Type.getArgumentTypes(method.desc);
-            StringBuilder sb = new StringBuilder("    public static ");
-            sb.append(javaName(imports, ret)).append(" ");
-            sb.append(method.name).append("(");
-            int localIdx = 0;
+            StringBuilder sb = new StringBuilder("    ");
+            sb.append(getAccess(method.access)).append(" ");
+            if (method.name.equals("<init>")) {
+                sb.append(shortName);
+            } else {
+                sb.append(javaName(imports, ret)).append(" ");
+                sb.append(method.name);
+            }
+            sb.append("(");
+            int localIdx = (method.access & ACC_STATIC) != 0 ? 0 : 1;
             Type lastArg = null;
             for (int i = 0; i < args.length; i++) {
                 if (i != 0) {
@@ -89,7 +99,15 @@ public class ShimGenerator {
             if (method.exceptions != null) {
                 LOGGER.warn("Exceptions not printed for {}", method.name + method.desc);
             }
-            sb.append(") {");
+            sb.append(") ");
+            if (method.exceptions != null) {
+                sb.append("throws ");
+                for (String exception : method.exceptions) {
+                    sb.append(javaName(imports, Type.getObjectType(exception)));
+                    sb.append(" ");
+                }
+            }
+            sb.append("{");
             l.add(sb.toString());
             // LWLJGL2 omitted some of the method suffixes, such as f and fv on various GL calls.
             // If we match the correct method we can just emit a bouncer instead of requiring a human.
@@ -117,13 +135,35 @@ public class ShimGenerator {
             l.add("    }");
         }
         l.add("}");
-        imports.sort(Comparator.naturalOrder());
-        imports.forEach(e -> System.out.println("import " + e + ";"));
-        System.out.println();
-        l.forEach(System.out::println);
+
+        return FastStream.of(imports)
+                .sorted()
+                .map(e -> "import " + e + ";")
+                .concat(FastStream.of(""))
+                .concat(l)
+                .toList();
     }
 
-    private @Nullable String findL3MethodWithSuffix(ShimTools.MethodEntry method, @Nullable Type lastArg, ShimTools.ClassEntry l3Ent) {
+    public static String getAccess(int access) {
+        StringBuilder sb = new StringBuilder();
+        if ((access & ACC_PUBLIC) != 0) sb.append("public ");
+        if ((access & ACC_PRIVATE) != 0) sb.append("private ");
+        if ((access & ACC_PROTECTED) != 0) sb.append("protected ");
+        if ((access & ACC_STATIC) != 0) sb.append("static ");
+        if ((access & ACC_FINAL) != 0) sb.append("final ");
+        if ((access & ACC_SYNCHRONIZED) != 0) sb.append("synchronized ");
+        if ((access & ACC_BRIDGE) != 0) sb.append("bridge ");
+        if ((access & ACC_VARARGS) != 0) sb.append("varargs ");
+        if ((access & ACC_NATIVE) != 0) sb.append("native ");
+        if ((access & ACC_ABSTRACT) != 0) sb.append("abstract ");
+        if ((access & ACC_STRICT) != 0) sb.append("strict ");
+        if ((access & ACC_SYNTHETIC) != 0) sb.append("synthetic ");
+        if ((access & ACC_MANDATED) != 0) sb.append("mandated ");
+        return sb.toString().trim();
+    }
+
+    private static @Nullable String findL3MethodWithSuffix(ShimTools.MethodEntry method, @Nullable Type lastArg, @Nullable ShimTools.ClassEntry l3Ent) {
+        if (l3Ent == null) return null;
         if (lastArg == null) return null;
         String letter;
         switch (lastArg.getClassName()) {
@@ -150,7 +190,7 @@ public class ShimGenerator {
         return null;
     }
 
-    private String javaName(List<String> imports, Type type) {
+    private static String javaName(List<String> imports, Type type) {
         String name = type.getClassName();
         if (type.getSort() == Type.OBJECT) {
             int lastDot = name.lastIndexOf(".");
