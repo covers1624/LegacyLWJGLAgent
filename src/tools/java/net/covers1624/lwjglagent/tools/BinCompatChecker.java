@@ -64,7 +64,14 @@ public class BinCompatChecker {
                 MethodEntry shimEntry = shimClass != null ? shimClass.methods.get(value.name + value.desc) : null;
                 if (runEntry == null && shimEntry == null) {
                     errors.add("Missing: " + value.name + value.desc);
-                } else if (runEntry != null) {
+                } else if (shimEntry != null) {
+                    int a2 = value.access & ~(ACC_NATIVE);
+                    int a3 = shimEntry.access & ~(ACC_NATIVE);
+                    if (a2 != a3) {
+                        errors.add("Shim access flags don't match " + value.name + value.desc);
+                        errors.add("  2'" + getAccess(a2) + "' -> 3'" + getAccess(a3) + "'");
+                    }
+                } else {
                     int a2 = value.access & ~(ACC_NATIVE);
                     int a3 = runEntry.access & ~(ACC_NATIVE);
                     if (a2 != a3) {
