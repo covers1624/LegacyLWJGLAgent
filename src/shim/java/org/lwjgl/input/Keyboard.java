@@ -252,7 +252,7 @@ public class Keyboard {
             addEvent(new KeyEvent(0, lwjglKey, keys[lwjglKey], action == GLFW_REPEAT));
         }));
         charCallback = glfwSetCharCallback(window, (window1, codepoint) -> {
-            addEvent(new KeyEvent(0, -1, true, false));
+            addEvent(new KeyEvent(codepoint, -1, true, false));
         });
     }
 
