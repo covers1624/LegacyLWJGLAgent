@@ -209,19 +209,19 @@ public class GL11 extends org.lwjgl.opengl.GL11 {
     }
 
     public static void glVertexPointer(int size, int stride, DoubleBuffer pointer) {
-        glVertexPointer(size, stride, GL_DOUBLE, memAddress(pointer));
+        glVertexPointer(size, GL_DOUBLE, stride, memAddress(pointer));
     }
 
     public static void glVertexPointer(int size, int stride, FloatBuffer pointer) {
-        glVertexPointer(size, stride, GL_FLOAT, pointer);
+        glVertexPointer(size, GL_FLOAT, stride, pointer);
     }
 
     public static void glVertexPointer(int size, int stride, IntBuffer pointer) {
-        glVertexPointer(size, stride, GL_INT, pointer);
+        glVertexPointer(size, GL_INT, stride, pointer);
     }
 
     public static void glVertexPointer(int size, int stride, ShortBuffer pointer) {
-        glVertexPointer(size, stride, GL_SHORT, pointer);
+        glVertexPointer(size, GL_SHORT, stride, pointer);
     }
 
     public static void glTexParameter(int target, int pname, FloatBuffer param) {
