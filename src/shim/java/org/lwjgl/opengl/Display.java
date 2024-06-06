@@ -69,6 +69,8 @@ public class Display {
 
     private static final DisplayMode[] EMPTY_DISPLAY_MODES = new DisplayMode[0];
 
+    private static final DisplayMode initial_mode;
+
     private static DisplayMode displayMode;
     private static boolean resizable;
     private static String title = "Game";
@@ -82,6 +84,19 @@ public class Display {
     private static @Nullable GLFWWindowSizeCallback resizeCallback;
     private static boolean wasResized;
     private static double lastDrawTime = Double.MIN_VALUE;
+
+    static {
+        GLFWErrorCallback.createPrint(System.err).set();
+        if (!glfwInit()) throw new RuntimeException("Failed to initialize GLFW");
+
+        long monitor = glfwGetPrimaryMonitor();
+        if (monitor == MemoryUtil.NULL) throw new RuntimeException("Failed to get primary monitor.");
+
+        GLFWVidMode mode = glfwGetVideoMode(monitor);
+        if (mode == null) throw new RuntimeException("Failed to get primary monitor video mode.");
+
+        initial_mode = getMode(mode);
+    }
 
     public static Drawable getDrawable() {
         return drawable;
@@ -99,15 +114,8 @@ public class Display {
                 .toArray(EMPTY_DISPLAY_MODES);
     }
 
-    // TODO this is actually initialized at Display init. We should do that too. Eventually.
-    public static @Nullable DisplayMode getDesktopDisplayMode() {
-        long monitor = glfwGetPrimaryMonitor();
-        if (monitor == MemoryUtil.NULL) return null;
-
-        GLFWVidMode mode = glfwGetVideoMode(monitor);
-        if (mode == null) return null;
-
-        return getMode(mode);
+    public static DisplayMode getDesktopDisplayMode() {
+        return initial_mode;
     }
 
     private static DisplayMode getMode(GLFWVidMode mode) {
@@ -225,9 +233,6 @@ public class Display {
 
     public static void create(PixelFormat pixel_format) throws LWJGLException {
         if (isCreated()) throw new LWJGLException("Only one LWJGL context may be instantiated at any one time.");
-
-        GLFWErrorCallback.createPrint(System.err).set();
-        if (!glfwInit()) throw new LWJGLException("Failed to initialize GLFW");
 
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
