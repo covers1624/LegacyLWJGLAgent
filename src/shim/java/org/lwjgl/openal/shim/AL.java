@@ -12,16 +12,17 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.IntBuffer;
 
 import static org.lwjgl.openal.ALC10.*;
+import static org.lwjgl.system.MemoryUtil.NULL;
 
 @Shim ("org.lwjgl.openal.AL")
 public class AL {
 
-    private static long device = MemoryUtil.NULL;
-    private static long context = MemoryUtil.NULL;
+    private static long device = NULL;
+    private static long context = NULL;
 
     @Rewire
     public static boolean isCreated() {
-        return device != MemoryUtil.NULL;
+        return device != NULL;
     }
 
     @Rewire
@@ -61,6 +62,19 @@ public class AL {
         }
 
         org.lwjgl.openal.AL.createCapabilities(deviceCaps);
+    }
+
+    @Rewire
+    public static void destroy() {
+        if (context != NULL) {
+            ALC10.alcMakeContextCurrent(NULL);
+            ALC10.alcDestroyContext(context);
+            context = NULL;
+        }
+        if (device != NULL) {
+            alcCloseDevice(device);
+            device = NULL;
+        }
     }
 
 //
