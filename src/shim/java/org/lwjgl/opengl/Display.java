@@ -74,6 +74,7 @@ public class Display {
     private static String title = "Game";
 
     private static long window = MemoryUtil.NULL;
+    private static DrawableGL drawable;
 
     private static int width;
     private static int height;
@@ -83,7 +84,7 @@ public class Display {
     private static double lastDrawTime = Double.MIN_VALUE;
 
     public static Drawable getDrawable() {
-        throw new StubbedMethod();
+        return drawable;
     }
 
     public static DisplayMode[] getAvailableDisplayModes() {
@@ -232,10 +233,10 @@ public class Display {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         glfwWindowHint(GLFW_RESIZABLE, resizable ? GLFW_TRUE : GLFW_FALSE);
         window = GLFW.glfwCreateWindow(displayMode.getWidth(), displayMode.getHeight(), title, MemoryUtil.NULL, MemoryUtil.NULL);
+        drawable = new DrawableGL(window);
         width = displayMode.getWidth();
         height = displayMode.getHeight();
-        GLFW.glfwMakeContextCurrent(window);
-        GL.createCapabilities();
+        drawable.makeCurrent();
         Mouse.create();
         Keyboard.create();
 
@@ -282,7 +283,7 @@ public class Display {
         Mouse.destroy();
         Keyboard.destroy();
 
-        glfwDestroyWindow(window);
+        drawable.destroy();
         glfwTerminate();
         // noinspection EmptyTryBlock
         try (GLFWErrorCallback prev = glfwSetErrorCallback(null)) { }
