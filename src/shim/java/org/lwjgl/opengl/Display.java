@@ -239,7 +239,8 @@ public class Display {
         Mouse.create();
         Keyboard.create();
 
-        resizeCallback = GLFW.glfwSetWindowSizeCallback(window, Display::onResized);
+        resizeCallback = GLFWWindowSizeCallback.create(Display::onResized);
+        glfwSetWindowSizeCallback(window, resizeCallback);
 
         GLFW.glfwShowWindow(window);
     }
