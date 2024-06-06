@@ -54,7 +54,7 @@ public class ShimGenerator {
 
         LOGGER.info("Stub class:");
 
-        generateClass(target, methods, l3Ent);
+        generateClass(target, methods, l3Ent).forEach(System.out::println);
     }
 
     public static List<String> generateClass(String targetClass, List<ShimTools.MethodEntry> methods, @Nullable ShimTools.ClassEntry l3Ent) {
