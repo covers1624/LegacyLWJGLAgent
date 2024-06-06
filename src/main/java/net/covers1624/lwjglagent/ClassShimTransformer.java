@@ -1,27 +1,25 @@
 package net.covers1624.lwjglagent;
 
-import net.covers1624.lwjglagent.shim.Named;
 import net.covers1624.lwjglagent.shim.Shim;
-import net.covers1624.quack.asm.annotation.AnnotationLoader;
+import net.covers1624.lwjglagent.shim.ShimInfo;
+import net.covers1624.lwjglagent.shim.ShimLoader;
 import net.covers1624.quack.collection.ColUtils;
+import net.covers1624.quack.collection.FastStream;
 import net.covers1624.quack.io.IOUtils;
 import org.objectweb.asm.*;
-import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.MethodNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
-import java.lang.instrument.IllegalClassFormatException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.ProtectionDomain;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -34,10 +32,34 @@ public class ClassShimTransformer implements ClassFileTransformer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClassShimTransformer.class);
 
-    private final Map<String, String> shims = new HashMap<>();
+    // Just to avoid rewriting all classes ever loaded.
+    // Only transform things which don't match this filter.
+    // These should not need to be touched by this agent.
+    // TODO sort based on frequency.
+    private static final String[] TRANSFORM_EXCLUSIONS = {
+            "com/sun/",
+            "sun",
+            "java/",
+            "javax/",
+            "com/google/",
+            "com/ibm/",
+            "akka/",
+            "com/typesafe/",
+            "org/apache/",
+            "org/codehaus/",
+            "io/netty/",
+            "it/unimi/",
+            "joptsimple/",
+            "gnu/trove/",
+            "org/objectweb/"
+    };
+
+    private final Map<String, ShimInfo> targetToShim = new HashMap<>();
+    private final Map<String, ShimInfo.RewireShim> rewireShims;
 
     public ClassShimTransformer(Path jar) throws IOException {
         LOGGER.info("Scanning for shim classes..");
+        List<ShimInfo> shims = new ArrayList<>();
         try (ZipFile zip = new ZipFile(jar.toFile())) {
             for (ZipEntry entry : ColUtils.iterable(zip.entries())) {
                 if (entry.isDirectory()) continue;
@@ -45,20 +67,21 @@ public class ClassShimTransformer implements ClassFileTransformer {
                 if (!eName.endsWith(".class")) continue;
 
                 try (InputStream is = zip.getInputStream(entry)) {
-                    ClassReader cr = new ClassReader(is);
-                    AnnotationLoader anns = new AnnotationLoader(true);
-                    cr.accept(anns.forClass(), ClassReader.SKIP_CODE);
-                    Shim shim = anns.getAnnotation(Shim.class);
-                    if (shim == null) continue;
-                    String cName = cr.getClassName();
-
-                    String target = getShimTarget(shim, cr.getSuperName());
-                    LOGGER.info("  Found @Shim: {} -> {}", cName, target);
-                    shims.put(target, cName);
+                    ShimInfo info = ShimLoader.loadShim(IOUtils.toBytes(is));
+                    if (info != null) {
+                        shims.add(info);
+                        targetToShim.put(info.target, info);
+                        LOGGER.info("  Found @Shim: {} -> {}", info.name, info.target);
+                    }
                 }
             }
         }
-        LOGGER.info("Identified {} shim classes.", shims.size());
+        LOGGER.info("Identified {} shim classes.", targetToShim.size());
+        rewireShims = FastStream.of(shims)
+                .flatMap(e -> e.rewireMethods)
+                .toMap(e -> e.target + e.targetName + e.desc, Function.identity());
+        LOGGER.info("Identified {} rewire methods.", rewireShims.size());
+        rewireShims.forEach((k, v) -> LOGGER.info("{} -> {}.{}{}", k, v.owner, v.name, v.desc));
     }
 
     public static String getShimTarget(Shim shim, String superClass) {
@@ -72,29 +95,49 @@ public class ClassShimTransformer implements ClassFileTransformer {
     }
 
     @Override
-    public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] bytes) throws IllegalClassFormatException {
-        String shimImpl = shims.get(className);
-        if (shimImpl == null) return bytes;
-
+    public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] bytes) {
+        if (!shouldTransform(className)) return bytes;
         try {
-            return emitStubs(bytes, getClassBytes(shimImpl));
+            ClassReader cr = new ClassReader(bytes);
+            ClassWriter cw = new ClassWriter(0);
+
+            AtomicBoolean didModify = new AtomicBoolean(false);
+            ClassVisitor cv = rewireVisitor(cw, didModify);
+
+            ShimInfo shim = targetToShim.get(className);
+            if (shim != null && !shim.bridgeMethods.isEmpty()) {
+                didModify.set(true);
+                cv = bridgeVisitor(cv, shim);
+            }
+            cr.accept(cv, 0);
+
+            if (!didModify.get()) return bytes;
+
+            byte[] modified = cw.toByteArray();
+            if (LWJGLAgent.DEBUG) {
+                try {
+                    Files.write(IOUtils.makeParents(Paths.get("./asm/lwjglagent/" + className + ".class")), modified);
+                } catch (IOException ex) {
+                    LOGGER.error("Failed to dump to file.", ex);
+                }
+            }
+
+            return modified;
         } catch (Throwable ex) {
             LOGGER.error("Failed to transform {}", className, ex);
             return bytes;
         }
     }
 
-    private static byte[] emitStubs(byte[] bytes, byte[] shimBytes) {
-        ClassNode shimNode = readClass(shimBytes, ClassReader.SKIP_CODE);
-
-        ClassReader cr = new ClassReader(bytes);
-        ClassWriter cw = new ClassWriter(cr, 0);
-
-        String cName = cr.getClassName();
-        LOGGER.info("Found shim class {} for class {}. Emitting bridges..", shimNode.name, cName);
-
-        ClassVisitor transformer = new ClassVisitor(ASM9, cw) {
+    private ClassVisitor bridgeVisitor(ClassVisitor delegate, ShimInfo shim) {
+        return new ClassVisitor(ASM9, delegate) {
             final Set<String> existingMethods = new HashSet<>();
+
+            @Override
+            public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                super.visit(version, access, name, signature, superName, interfaces);
+                LOGGER.info("Found shim class {} for class {}. Emitting bridges..", shim.name, name);
+            }
 
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
@@ -104,31 +147,25 @@ public class ClassShimTransformer implements ClassFileTransformer {
 
             @Override
             public void visitEnd() {
-                for (MethodNode method : shimNode.methods) {
-                    if ((method.access & ACC_PUBLIC) == 0) continue;
-                    if ((method.access & ACC_STATIC) == 0) continue;
-                    if (method.name.equals("<clinit>")) continue;
+                for (ShimInfo.ShimMethod method : shim.bridgeMethods) {
                     if (existingMethods.contains(method.name + method.desc)) {
                         LOGGER.error("Method already exists at target: {}{}", method.name, method.desc);
                         continue;
                     }
-                    AnnotationLoader anns = new AnnotationLoader();
-                    method.accept(anns.forMethod());
-                    Named named = anns.getAnnotation(Named.class);
                     LOGGER.info("  Making bridge shim for {}{}", method.name, method.desc);
-                    if (named != null) {
-                        LOGGER.info("   Bridge has explicit name {}", named.value());
+                    if (!method.name.equals(method.targetName)) {
+                        LOGGER.info("   Bridge has explicit name {}", method.targetName);
                     }
 
                     int localIdx = 0;
-                    MethodVisitor mv = super.visitMethod(method.access, named != null ? named.value() : method.name, method.desc, method.signature, null);
+                    MethodVisitor mv = super.visitMethod(method.access, method.targetName, method.desc, method.signature, null);
                     mv.visitCode();
                     for (Type arg : Type.getArgumentTypes(method.desc)) {
                         mv.visitVarInsn(arg.getOpcode(ILOAD), localIdx);
                         localIdx += arg.getSize();
                     }
 
-                    mv.visitMethodInsn(INVOKESTATIC, shimNode.name, method.name, method.desc, false);
+                    mv.visitMethodInsn(INVOKESTATIC, method.owner, method.name, method.desc, false);
                     Type ret = Type.getReturnType(method.desc);
                     mv.visitInsn(ret.getOpcode(IRETURN));
                     // Max locals and stack are identical for static bouncer methods.
@@ -138,25 +175,52 @@ public class ClassShimTransformer implements ClassFileTransformer {
                     );
                     mv.visitEnd();
                 }
+                LOGGER.info("Bridges made!");
             }
         };
-
-        cr.accept(transformer, 0);
-        LOGGER.info("Bridges made!");
-        return cw.toByteArray();
     }
 
-    private static byte[] getClassBytes(String cName) throws IOException {
-        try (InputStream is = ClassShimTransformer.class.getResourceAsStream("/" + cName + ".class")) {
-            if (is == null) throw new FileNotFoundException("Failed to find class: " + cName);
-            return IOUtils.toBytes(is);
+    private ClassVisitor rewireVisitor(ClassVisitor delegate, AtomicBoolean modified) {
+        return new ClassVisitor(ASM9, delegate) {
+
+            String cName;
+
+            @Override
+            public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                cName = name;
+                super.visit(version, access, name, signature, superName, interfaces);
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String mName, String mDesc, String signature, String[] exceptions) {
+                return new MethodVisitor(ASM9, super.visitMethod(access, mName, mDesc, signature, exceptions)) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean isInterface) {
+                        ShimInfo.RewireShim shim = rewireShims.get(owner + name + desc);
+                        if (shim != null && FastStream.of(shim.rewire.value()).noneMatch(e -> cName.startsWith(owner))) {
+                            modified.set(true);
+                            LOGGER.info(
+                                    "Rewiring call in {}.{}{} from {}.{}{} -> {}.{}{}",
+                                    cName, mName, mDesc,
+                                    owner, name, desc,
+                                    shim.owner, shim.name, shim.desc
+                            );
+                            super.visitMethodInsn(opcode, shim.owner, shim.name, shim.desc, isInterface);
+                        } else {
+                            super.visitMethodInsn(opcode, owner, name, desc, isInterface);
+                        }
+                    }
+                };
+            }
+        };
+    }
+
+    public static boolean shouldTransform(String cName) {
+        for (String ex : TRANSFORM_EXCLUSIONS) {
+            if (cName.startsWith(ex)) {
+                return false;
+            }
         }
-    }
-
-    private static ClassNode readClass(byte[] bytes, int flags) {
-        ClassReader cr = new ClassReader(bytes);
-        ClassNode cNode = new ClassNode();
-        cr.accept(cNode, flags);
-        return cNode;
+        return true;
     }
 }

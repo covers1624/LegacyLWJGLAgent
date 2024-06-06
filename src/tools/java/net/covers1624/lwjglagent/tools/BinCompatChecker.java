@@ -63,7 +63,7 @@ public class BinCompatChecker {
                 MethodEntry runEntry = runClazz.methods.get(value.name + value.desc);
                 MethodEntry shimEntry = shimClass != null ? shimClass.methods.get(value.name + value.desc) : null;
                 if (runEntry == null && shimEntry == null) {
-                    errors.add("Missing:" + value.name + value.desc);
+                    errors.add("Missing: " + value.name + value.desc);
                 } else if (runEntry != null) {
                     int a2 = value.access & ~(ACC_NATIVE);
                     int a3 = runEntry.access & ~(ACC_NATIVE);
@@ -71,7 +71,6 @@ public class BinCompatChecker {
                         errors.add("Access flags don't match " + value.name + value.desc);
                         errors.add("  2'" + getAccess(a2) + "' -> 3'" + getAccess(a3) + "'");
                     }
-
                 }
             }
 

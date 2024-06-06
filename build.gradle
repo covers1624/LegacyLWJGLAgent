@@ -51,7 +51,7 @@ dependencies {
     shimCompileOnly sourceSets.main.output
 
     implementation 'org.slf4j:slf4j-api:2.0.13'
-    implementation 'net.covers1624:Quack:0.4.10.101'
+    implementation 'net.covers1624:Quack:0.4.10.103'
 
     implementation 'org.ow2.asm:asm:9.4'
     implementation 'org.ow2.asm:asm-tree:9.4'

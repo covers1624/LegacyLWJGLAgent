@@ -1,5 +1,6 @@
 package org.lwjgl.openal.shim;
 
+import net.covers1624.lwjglagent.shim.Rewire;
 import net.covers1624.lwjglagent.shim.Shim;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.LWJGLException;
@@ -18,18 +19,22 @@ public class AL {
     private static long device = MemoryUtil.NULL;
     private static long context = MemoryUtil.NULL;
 
+    @Rewire
     public static boolean isCreated() {
         return device != MemoryUtil.NULL;
     }
 
+    @Rewire
     public static void create() throws LWJGLException {
         create(null, 44100, 60, false);
     }
 
+    @Rewire
     public static void create(String deviceArguments, int contextFrequency, int contextRefresh, boolean contextSynchronized) throws LWJGLException {
         create(deviceArguments, contextFrequency, contextRefresh, contextSynchronized, true);
     }
 
+    @Rewire
     public static void create(String deviceArguments, int contextFrequency, int contextRefresh, boolean contextSynchronized, boolean openDevice) throws LWJGLException {
         if (isCreated()) {
             throw new IllegalStateException("Only one OpenAL context may be instantiated at any one time.");

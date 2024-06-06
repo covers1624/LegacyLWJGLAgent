@@ -4,6 +4,7 @@ import net.covers1624.quack.collection.ColUtils;
 import net.covers1624.quack.collection.FastStream;
 import net.covers1624.quack.io.IOUtils;
 import net.covers1624.quack.util.SneakyUtils;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sun.misc.URLClassPath;
@@ -47,7 +48,12 @@ public class LWJGLAgent {
             Pattern.compile("/lwjgl-2.+\\.jar")
     );
 
-    public static void premain(String args, Instrumentation inst) throws IOException {
+    public static boolean DEBUG = false;
+
+    public static void premain(@Nullable String args, Instrumentation inst) throws IOException {
+        if (args != null && args.contains("debug")) {
+            DEBUG = true;
+        }
         LOGGER.info("Initializing LWJGLAgent.");
         Path jar = getOurPath();
         LOGGER.info("Found jar at: {}", jar);
