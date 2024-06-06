@@ -331,6 +331,7 @@ public class Mouse {
             glfwSetInputMode(window, GLFW_CURSOR, grab ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
             queue.clear();
             currentEvent.reset(true);
+            dx = dy = dwheel = 0;
         }
     }
 
