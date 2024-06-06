@@ -1,16 +1,22 @@
 package net.covers1624.lwjglagent;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Created by covers1624 on 2/6/24.
  */
 public class StubbedMethod extends RuntimeException {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(StubbedMethod.class);
+
     public StubbedMethod() {
-        super("Method is a stub");
+        this("Method is a stub");
     }
 
     public StubbedMethod(String message) {
         super(message);
+        LOGGER.error("Stubbed method called.", this);
     }
 
     @Override
