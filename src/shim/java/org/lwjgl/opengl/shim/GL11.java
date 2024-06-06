@@ -21,7 +21,7 @@ public class GL11 extends org.lwjgl.opengl.GL11 {
     }
 
     public static void glColorPointer(int size, boolean unsigned, int stride, ByteBuffer pointer) {
-        glColorPointer(size, GL_BYTE, stride, memAddress(pointer));
+        glColorPointer(size, unsigned ? GL_UNSIGNED_BYTE : GL_BYTE, stride, memAddress(pointer));
     }
 
     public static void glDrawElements(int mode, int count, int type, ByteBuffer indices) {
